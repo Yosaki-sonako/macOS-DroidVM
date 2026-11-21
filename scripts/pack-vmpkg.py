@@ -4,7 +4,7 @@
 The package format mirrors DroidVM's VMExportTask exactly:
   - header (24 bytes): "VMPKG" + u16 manifestVersion + u16 appVersionCode +
     u16 manifestSize + u16 compression + u16 volumeCount + i64 dataSize
-  - manifest.json (the PackageManifest), zero-padded to 8-byte alignment
+  - manifest.json (the PackageManifest), zero-padded to 0x1000 (page) alignment
   - volume index JSON (VolumeIndex: magic "VMPV", version, data_size, volumes[])
   - the compressed data stream = zstd(ustar tar of [manifest.json, disks..., boots...])
   - split across <out>.001, <out>.002, ... with the volume index in the master <out>.vmpkg
@@ -43,8 +43,16 @@ VOLUME_MAX_COUNT = 999
 DEFAULT_VOLUME_SIZE = 1900 * 1024 * 1024
 
 
-def align_up(n, a=8):
-    return (n + a - 1) // a * a
+ALIGN = 0x1000  # DroidVM BinaryUtils.alignUp/alignUpStrict default to 0x1000 (4096), NOT 8
+
+
+def align_up(n, a=ALIGN):
+    return (n + a - 1) & ~(a - 1)
+
+
+def align_up_strict(n, a=ALIGN):
+    aligned = align_up(n, a)
+    return aligned + a if aligned == n else aligned
 
 
 def build_vm_config(width=1280, height=720):
@@ -175,11 +183,18 @@ def write_master(out_base, manifest_bytes, data_size, entries):
         "volumes": entries,
     }
     index_bytes = json.dumps(index, separators=(",", ":")).encode()
+    ms = len(manifest_bytes)
+    # Master layout (matches DroidVM VMExportTask + VolumeSet.discover):
+    #   header(24) | pad to 0x1000 | manifest(ms) | pad to dataStart | volume index JSON
+    # dataStart = alignUpStrict(alignUp(HEADER_SIZE) + manifestSize). The header's dataSize is a
+    # 0 placeholder (multi-volume packages only know it after streaming; VolumeSet carries the
+    # real value), so PackageInput.open(in, set.dataSize()) overrides it on import.
+    data_start = align_up_strict(align_up(HEADER_SIZE) + ms)
     with open(out_base + ".vmpkg", "wb") as master:
-        master.write(build_header(len(manifest_bytes), data_size, len(entries)))
+        master.write(build_header(ms, 0, len(entries)))
         master.write(b"\0" * (align_up(HEADER_SIZE) - HEADER_SIZE))
         master.write(manifest_bytes)
-        master.write(b"\0" * (align_up(len(manifest_bytes)) - len(manifest_bytes)))
+        master.write(b"\0" * (data_start - (align_up(HEADER_SIZE) + ms)))
         master.write(index_bytes)
 
 
