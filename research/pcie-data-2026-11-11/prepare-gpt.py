@@ -9,6 +9,7 @@ from pathlib import Path
 magic, version, page, logical, extents = struct.unpack('<8sIIQQ', Path(sys.argv[1]).read_bytes())
 assert (magic, version, page, extents) == (b'DBRDISK1', 1, 4096, 0)
 out = Path(sys.argv[2])
+out.mkdir(parents=True, exist_ok=True)
 total = (logical + 2 * 1024 * 1024) // 512
 entries = bytearray(128 * 128)
 entries[:16] = uuid.UUID('69646961-6700-11AA-AA11-00306543ECAC').bytes_le
