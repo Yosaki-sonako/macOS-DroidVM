@@ -391,6 +391,25 @@ jobs:
           cp "$image/image.tar.zst.enc.sha256" "$image/plain/"
           rm -rf "$stage"
           cat "$image/plain/sha256.txt"
+      # One-file-per-disk .vmpkg: data-store -> data-pcie (GPT wrapper + fold), then boot.img +
+      # data-pcie.img + edk2-macos.fd into a split .vmpkg (zstd tar). Uses the plain files that
+      # still sit in the workspace; the FDT this run built the ADT from is the phone's (configs/k27-user.dtb).
+      - name: Pack vmpkg
+        working-directory: ws
+        run: |
+          set -e
+          python3 research/pcie-data-2026-11-11/prepare-gpt.py "artifacts/$TAG/disk/scratch-data.img" "$RUNNER_TEMP/gpt"
+          gcc -O2 -o "$RUNNER_TEMP/store-to-raw" research/pcie-data-2026-11-11/store-to-raw.c
+          "$RUNNER_TEMP/store-to-raw" "artifacts/$TAG/disk/data-store.img" "$RUNNER_TEMP/data-pcie.img" \
+            "$RUNNER_TEMP/gpt/data-gpt-prefix.bin" "$RUNNER_TEMP/gpt/data-gpt-suffix.bin"
+          mkdir -p "$RUNNER_TEMP/vmpkg"
+          python3 scripts/pack-vmpkg.py \
+            --boot out/product/k27/boot.img \
+            --data "$RUNNER_TEMP/data-pcie.img" \
+            --firmware configs/edk2-macos.fd \
+            --out "$RUNNER_TEMP/vmpkg/macos-27.2" \
+            --volume-size 1900000000
+          ls -la "$RUNNER_TEMP/vmpkg/"
       # the encrypted parts in one artifact: zip storing them as they are (compression-level 0), one upload instead of one per part
       - uses: actions/upload-artifact@v7
         with:
@@ -411,3 +430,5 @@ jobs:
           gh release create "$release" --repo "$GITHUB_REPOSITORY" --prerelease --title "k27 $TAG image ${{ github.run_number }} (encrypted)" \
             --notes "boot.img and a new install (data-store.img), ARTIFACT_KEY encrypted: scripts/ci-blob.sh unpack DIR image.tar.zst.enc.[0-9][0-9][0-9]"
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/image/image.tar.zst.enc.[0-9][0-9][0-9] "$RUNNER_TEMP"/image/plain/*
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" \
+            "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg "$RUNNER_TEMP"/vmpkg/macos-27.2.[0-9][0-9][0-9]
