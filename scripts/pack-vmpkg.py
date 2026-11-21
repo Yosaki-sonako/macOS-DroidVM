@@ -24,6 +24,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import zlib
 from pathlib import Path
@@ -221,23 +222,39 @@ def main():
     if len(manifest_bytes) > 0xFFFF:
         raise SystemExit(f"manifest too large: {len(manifest_bytes)} bytes")
 
-    # Streamed pack: tar (GNU format, so >8 GiB sizes use base-256) -> zstd stdin ->
-    # zstd stdout -> fixed sub-volumes. Never buffers the 48 GiB data image whole.
+    # Streamed pack: tar (GNU format, so >8 GiB sizes use base-256) -> zstd ->
+    # fixed sub-volumes. Never buffers the 48 GiB data image whole.
+    #
+    # The tar feed runs on a worker thread while this thread drains zstd's stdout.
+    # Feeding stdin and reading stdout on the *same* process serially is a classic
+    # pipe deadlock: zstd's 64 KiB stdout pipe fills up while we are still writing
+    # the tar stream, so zstd blocks on write(stdout), stops read(stdin), and we
+    # block on write(stdin). The previous version hung forever exactly there.
     zstd_proc = subprocess.Popen(
         ["zstd", "-q", "-c", "-T0"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
     )
-    with tarfile.open(fileobj=zstd_proc.stdin, mode="w|", format=tarfile.GNU_FORMAT) as tar:
-        ti = tarfile.TarInfo(MANIFEST_NAME)
-        ti.size = len(manifest_bytes)
-        ti.mode = 0o644
-        ti.mtime = int(time.time())
-        tar.addfile(ti, io.BytesIO(manifest_bytes))
-        for d in disks:
-            tar.add(d["path"], arcname=d["archive_path"], recursive=False)
-        for b in boots:
-            tar.add(b["path"], arcname=b["archive_path"], recursive=False)
-    zstd_proc.stdin.close()
+    feed_error = []
+
+    def feed_tar():
+        try:
+            with tarfile.open(fileobj=zstd_proc.stdin, mode="w|", format=tarfile.GNU_FORMAT) as tar:
+                ti = tarfile.TarInfo(MANIFEST_NAME)
+                ti.size = len(manifest_bytes)
+                ti.mode = 0o644
+                ti.mtime = int(time.time())
+                tar.addfile(ti, io.BytesIO(manifest_bytes))
+                for d in disks:
+                    tar.add(d["path"], arcname=d["archive_path"], recursive=False)
+                for b in boots:
+                    tar.add(b["path"], arcname=b["archive_path"], recursive=False)
+        except BaseException as e:  # noqa: BLE001 - surfaced after the drain loop
+            feed_error.append(e)
+        finally:
+            zstd_proc.stdin.close()
+
+    feeder = threading.Thread(target=feed_tar, daemon=True)
+    feeder.start()
 
     entries = []
     data_size = 0
@@ -266,8 +283,11 @@ def main():
             f.write(piece)
         entries.append({"index": idx, "size": len(piece), "crc32": zlib.crc32(piece)})
         data_size += len(piece)
+    feeder.join()
     zstd_proc.stdout.close()
     rc = zstd_proc.wait()
+    if feed_error:
+        raise SystemExit(f"tar feed failed: {feed_error[0]}")
     if rc != 0:
         raise SystemExit(f"zstd failed with exit code {rc}")
 
