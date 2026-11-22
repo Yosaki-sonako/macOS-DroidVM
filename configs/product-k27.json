@@ -93,8 +93,8 @@
   "MACOS_VIDEO": "1",
   "MACOS_AUDIO": "1",
   "MACOS_VIRTIO_GPU": "1",
-  "MACOS_SND": "0",
-  "MACOS_MEDIA": "0",
+  "MACOS_SND": "1",
+  "MACOS_MEDIA": "1",
   "MACOS_MEDIA_VIDC": "0",
   "MACOS_LP_SIP0": "0x2",
   "MACOS_BOOT_MANIFEST_HASH": "1"

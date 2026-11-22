@@ -391,9 +391,10 @@ jobs:
           cp "$image/image.tar.zst.enc.sha256" "$image/plain/"
           rm -rf "$stage"
           cat "$image/plain/sha256.txt"
-      # One-file-per-disk .vmpkg: data-store -> data-pcie (GPT wrapper + fold), then boot.img +
-      # data-pcie.img + edk2-macos.fd into a split .vmpkg (zstd tar). Uses the plain files that
-      # still sit in the workspace; the FDT this run built the ADT from is the phone's (configs/k27-user.dtb).
+      # Single-file .vmpkg (volume_count=0): data-store -> data-pcie (GPT wrapper), then boot.img +
+      # data-pcie.img + edk2-macos.fd into one portable .vmpkg (zstd tar, data inlined after the
+      # manifest). The FDT this run rebuilt the boot ADT from is configs/k27-generated.dtb (PCI data
+      # disks + MMIO gpu/snd/media), matching virtio_transport=custom in configs/vmpkg-27.2.json.
       - name: Pack vmpkg
         working-directory: ws
         run: |
@@ -404,12 +405,20 @@ jobs:
           "$RUNNER_TEMP/store-to-raw" "artifacts/$TAG/disk/data-store.img" "$RUNNER_TEMP/data-pcie.img" \
             "$RUNNER_TEMP/gpt/data-gpt-prefix.bin" "$RUNNER_TEMP/gpt/data-gpt-suffix.bin"
           mkdir -p "$RUNNER_TEMP/vmpkg"
-          python3 scripts/pack-vmpkg.py \
-            --boot out/product/k27/boot.img \
-            --data "$RUNNER_TEMP/data-pcie.img" \
-            --firmware configs/edk2-macos.fd \
-            --out "$RUNNER_TEMP/vmpkg/macos-27.2" \
-            --volume-size 1900000000
+          python3 scripts/build-vmpkg-manifest.py \
+            --template configs/vmpkg-27.2.json \
+            --payload "boot.img=out/product/k27/boot.img" \
+            --payload "data-pcie.img=$RUNNER_TEMP/data-pcie.img" \
+            --payload "edk2-macos.fd=configs/edk2-macos.fd" \
+            --output "$RUNNER_TEMP/vmpkg/manifest.json"
+          python3 scripts/vmpkg_tool.py pack \
+            --manifest "$RUNNER_TEMP/vmpkg/manifest.json" \
+            --file "boot.img=out/product/k27/boot.img" \
+            --file "data-pcie.img=$RUNNER_TEMP/data-pcie.img" \
+            --file "edk2-macos.fd=configs/edk2-macos.fd" \
+            --output "$RUNNER_TEMP/vmpkg/macos-27.2.vmpkg" --compression zstd
+          python3 scripts/vmpkg_tool.py inspect "$RUNNER_TEMP/vmpkg/macos-27.2.vmpkg" \
+            --verify-payloads --expected-report "$RUNNER_TEMP/vmpkg/macos-27.2.vmpkg.report.json"
           ls -la "$RUNNER_TEMP/vmpkg/"
       # the encrypted parts in one artifact: zip storing them as they are (compression-level 0), one upload instead of one per part
       - uses: actions/upload-artifact@v7
@@ -431,5 +440,4 @@ jobs:
           gh release create "$release" --repo "$GITHUB_REPOSITORY" --prerelease --title "k27 $TAG image ${{ github.run_number }} (encrypted)" \
             --notes "boot.img and a new install (data-store.img), ARTIFACT_KEY encrypted: scripts/ci-blob.sh unpack DIR image.tar.zst.enc.[0-9][0-9][0-9]"
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/image/image.tar.zst.enc.[0-9][0-9][0-9] "$RUNNER_TEMP"/image/plain/*
-          gh release upload "$release" --repo "$GITHUB_REPOSITORY" \
-            "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg.[0-9][0-9][0-9]
+          gh release upload "$release" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg

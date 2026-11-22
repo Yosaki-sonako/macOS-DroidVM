@@ -45,7 +45,7 @@ runs:
           echo "MACOS_RUST_TOOLCHAIN=$rust" >> "$GITHUB_ENV"
         fi
         {
-          echo "MACOS_FDT=$PWD/configs/k27-user.dtb"
+          echo "MACOS_FDT=$PWD/configs/k27-generated.dtb"
           # INPUTS_KEY: the IPSW inputs' release (the product's "inputs", the two IPSW profiles); INSTALL_KEY: the new install's
           # (those, the scripts that make it, DarwinBoot's packed_ramdisk, the APFS tools); KDK_KEY: out/x12377/kdk's cache
           python3 -c "
