@@ -432,4 +432,4 @@ jobs:
             --notes "boot.img and a new install (data-store.img), ARTIFACT_KEY encrypted: scripts/ci-blob.sh unpack DIR image.tar.zst.enc.[0-9][0-9][0-9]"
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" "$RUNNER_TEMP"/image/image.tar.zst.enc.[0-9][0-9][0-9] "$RUNNER_TEMP"/image/plain/*
           gh release upload "$release" --repo "$GITHUB_REPOSITORY" \
-            "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg "$RUNNER_TEMP"/vmpkg/macos-27.2.[0-9][0-9][0-9]
+            "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg "$RUNNER_TEMP"/vmpkg/macos-27.2.vmpkg.[0-9][0-9][0-9]

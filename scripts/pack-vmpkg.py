@@ -173,7 +173,11 @@ def build_header(manifest_size, data_size, volume_count):
 
 
 def volume_name(base, index):
-    return f"{base}.{index:0{VOLUME_SUFFIX_DIGITS}d}"
+    # DroidVM 的 VolumeSplitOutputStream.volumeName(masterPath, i) 生成
+    # "<masterPath>.<NNN>"，而 master 文件是 "<base>.vmpkg"，所以子卷名必须是
+    # "<base>.vmpkg.<NNN>"（如 macos-27.2.vmpkg.001）。之前少了 ".vmpkg" 导致
+    # VolumeSet.discover 找 "macos-27.2.vmpkg.001" 而实际是 "macos-27.2.001"。
+    return f"{base}.vmpkg.{index:0{VOLUME_SUFFIX_DIGITS}d}"
 
 
 def write_master(out_base, manifest_bytes, data_size, entries):
