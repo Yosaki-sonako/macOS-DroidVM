@@ -218,6 +218,11 @@ private:
     int32_t fCursorX, fCursorY, fCursorOffsetX, fCursorOffsetY;
     uint32_t fCursorCropX, fCursorCropY;
     bool fCursorVisible;
+    // The glyph of the last UPDATE_CURSOR, compared before sending another: WindowServer touches its cursor surface every frame, so the
+    // unlock seed changes with every swap and the seed alone re-sent the same 64x64 glyph (a synchronous command, one per frame).
+    uint8_t *fCursorScratch;
+    bool fCursorUploaded;
+    unsigned fCursorFailures;
     uint64_t fCursorUpdates, fCursorMoves;
     void copySurface(IOSurface *, bool refresh = false);
     bool scanOut(IOSurface *);
@@ -253,6 +258,9 @@ private:
     ScanoutResource fResources[kScanoutResources];
     VirtioGpuEntry *fEntries;   // a blob's page list being built (copy thread)
     uint64_t fResourceClock, fFlushes, fFlushNs, fFlushMaxNs;
+    // The last scanOut's time: a retry of the surface on screen cannot beat a host that already takes longer than one refresh
+    // interval for a single flush, it only takes the next real frame's turn.
+    uint64_t fLastScanNs;
     uint64_t fLastFrameTime, fFrameGapMaxNs, fHitches;   // main frames apart by 50 to 500 ms (a still screen is longer)
     uint64_t fSecondStart, fSecondFrames, fPeakFps;      // main frames in each second, the most of a report's seconds
     // Scheduling latency in the guest: the copy thread from its wakeup to running, the VBL timer past its period.
@@ -421,6 +429,9 @@ void DroidVMDisplay::stop(IOService *provider)
         DroidVMVirtioGpu::cursor(0, 0, 0, 0, 0, true);
         DroidVMVirtioGpu::unref(fCursorResource);
     }
+    if (fCursorScratch)
+        IOFree(fCursorScratch, 64 * 64 * 4);
+    fCursorScratch = nullptr;
     OSSafeReleaseNULL(fCursorPixels);
     if (fCursorSurface)
         reinterpret_cast<OSObject *>(fCursorSurface)->release();
@@ -517,7 +528,12 @@ IOReturn DroidVMDisplay::swap_begin_gated()
     }
     if (fFrames == frames && fShown && fRefreshLeft) {
         unsigned elapsed = kRefreshTicks - --fRefreshLeft;
-        if (!(elapsed & (elapsed - 1)) || !fRefreshLeft)
+        // Retries catch a frame the GPU was still drawing when the swap copied it -- milliseconds of the work loop on a host that
+        // turns a flush around in tens of milliseconds. Where one flush already costs a refresh interval or more, the later retries
+        // cannot catch anything the next swap will not, and each one holds the copy thread for that whole interval while the real
+        // frames wait behind it: keep the first retry, the one a still screen depends on, and drop the rest.
+        uint64_t period = 1000000000ULL / fRefreshHz;
+        if ((!(elapsed & (elapsed - 1)) || !fRefreshLeft) && (elapsed == 1 || fLastScanNs < period))
             requestCopy(fShown, true);
     } else if (fFrames == frames && fShown && fGpu.ready() && fTicks % fRefreshHz == 0) {
         // A still screen sends nothing, and the app's window (re)created meanwhile (the activity resumed, rotated) stayed black:
@@ -618,10 +634,16 @@ IOReturn DroidVMDisplay::set_parameter(IOMFBParameterName name, const unsigned l
         return IOMobileFramebufferLegacy::set_parameter(name, values, count);
     if (count != 4 || !values)
         return kIOReturnBadArgument;
-    fCursorX = static_cast<uint16_t>(values[1]);
-    fCursorY = static_cast<uint16_t>(values[2]);
-    bool changed = fCursorVisible != !!values[3];
-    fCursorVisible = !!values[3];
+    uint16_t x = static_cast<uint16_t>(values[1]), y = static_cast<uint16_t>(values[2]);
+    bool visible = !!values[3];
+    // WindowServer sends the bundle on every frame it composes, most of them with the pointer where it already was: a MOVE_CURSOR for
+    // an unchanged position is a command on a queue that may be a frame behind.
+    if (x == fCursorX && y == fCursorY && visible == fCursorVisible)
+        return kIOReturnSuccess;
+    fCursorX = x;
+    fCursorY = y;
+    bool changed = fCursorVisible != visible;
+    fCursorVisible = visible;
     fCursorMoves++;
     return moveCursor(changed);
 }
@@ -641,8 +663,9 @@ IOReturn DroidVMDisplay::moveCursor(bool image)
     y += fCursorCropY;
     IOReturn status = DroidVMVirtioGpu::cursor(fCursorVisible ? fCursorResource : 0,
         x, y, 0, 0, image || !fCursorVisible);
-    if (status)
-        IOLog("DroidVMDisplay: cursor command failed %#x\n", status);
+    // Every one of these is a second of WindowServer's time (the cursor queue's deadline) and used to print a line apiece.
+    if (status && (fCursorFailures++ == 0 || (fCursorFailures & 63) == 0))
+        IOLog("DroidVMDisplay: cursor command failed %#x (%u so far)\n", status, fCursorFailures);
     return status;
 }
 
@@ -692,6 +715,8 @@ void DroidVMDisplay::updateCursor(IOSurface *surface, int32_t x, int32_t y)
         fCursorWidth = cursorSize;
         fCursorHeight = cursorSize;
     }
+    if (!fCursorScratch && !(fCursorScratch = static_cast<uint8_t *>(IOMalloc(cursorSize * cursorSize * 4))))
+        return;
     IOMemoryMap *map = memory->createMappingInTask(kernel_task, 0, kIOMapAnywhere);
     if (!map)
         return;
@@ -705,18 +730,37 @@ void DroidVMDisplay::updateCursor(IOSurface *surface, int32_t x, int32_t y)
                 if (row < top) top = row;
             }
     auto *pixels = static_cast<uint8_t *>(fCursorPixels->getBytesNoCopy());
-    bzero(pixels, cursorSize * cursorSize * 4);
+    bzero(fCursorScratch, cursorSize * cursorSize * 4);
     uint32_t copyWidth = width - left < cursorSize ? width - left : cursorSize;
     uint32_t copyHeight = height - top < cursorSize ? height - top : cursorSize;
     for (uint32_t row = 0; row < copyHeight; row++)
-        memcpy(pixels + row * cursorSize * 4, source + (row + top) * stride + left * 4, copyWidth * 4);
+        memcpy(fCursorScratch + row * cursorSize * 4, source + (row + top) * stride + left * 4, copyWidth * 4);
     map->release();
+    // The same glyph again: WindowServer recomposites the cursor surface every frame but only the arrow (or the I-beam, or the
+    // resize handle) comes out of it. The seed says the surface was written, not that the glyph changed -- at 40 updates a second each
+    // one sent a synchronous UPDATE_CURSOR behind a host that was a frame behind, and the cursor took the frame's whole turnaround.
+    if (fCursorUploaded && !memcmp(fCursorScratch, pixels, cursorSize * cursorSize * 4)) {
+        bool hidden = !fCursorVisible;
+        fCursorCropX = left;
+        fCursorCropY = top;
+        reinterpret_cast<OSObject *>(surface)->retain();
+        if (fCursorSurface)
+            reinterpret_cast<OSObject *>(fCursorSurface)->release();
+        fCursorSurface = surface;
+        fCursorSeed = seed;
+        fCursorVisible = true;
+        fCursorMoves++;
+        moveCursor(hidden);
+        return;
+    }
+    memcpy(pixels, fCursorScratch, cursorSize * cursorSize * 4);
     fCursorCropX = left;
     fCursorCropY = top;
     struct { VirtioGpuHeader h; VirtioGpuRect rect; uint64_t offset; uint32_t id, padding; }
         transfer = {{0x105, 0, 0, 0, 0, {}}, {0, 0, cursorSize, cursorSize}, 0, fCursorResource, 0};
     if (fGpu.command(&transfer, sizeof(transfer)))
         return;
+    fCursorUploaded = true;
     reinterpret_cast<OSObject *>(surface)->retain();
     if (fCursorSurface)
         reinterpret_cast<OSObject *>(fCursorSurface)->release();
@@ -880,7 +924,10 @@ void DroidVMDisplay::copyLoop()
             if (!drawn)
                 fGpuLate++;
         }
-        if (!scanOut(surface))
+        // The CPU copy goes to the boot framebuffer, which the app only shows while the virtio-gpu is not up: with the device
+        // scanning out, a failed blob import or flush would copy the frame where nothing reads it, and the copy costs tens of
+        // milliseconds of the thread the next frame waits on.
+        if (!scanOut(surface) && (!fGpu.ready() || fScanoutFailures >= 8))
             copySurface(surface, refresh);
         reinterpret_cast<OSObject *>(surface)->release();
         IOLockLock(fCopyLock);
@@ -1067,6 +1114,7 @@ bool DroidVMDisplay::scanOut(IOSurface *surface)
     }
     uint64_t ns;
     absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
+    fLastScanNs = ns;
     fFlushes++;
     fFlushNs += ns;
     if (ns > fFlushMaxNs)
