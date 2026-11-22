@@ -109,7 +109,7 @@ GPU_EXEC_ENV = []
 # simplefb. The daemon builds its --gpu (virglrenderer, context-types=drm, udmabuf) and the gpu-0 screen's display service from the
 # gpu_* fields and screens; the guest scans out IOSurface pages as guest-handle blobs, which the host blits (zero copy in the guest).
 VIRTIO_GPU = os.environ.get('MACOS_VIRTIO_GPU') == '1'
-REFRESH_HZ = int(os.environ.get('MACOS_REFRESH_HZ') or 120)
+REFRESH_HZ = int(os.environ.get('MACOS_REFRESH_HZ') or 60)
 # MACOS_NET (default 1): the app's br-wifi network (a tap bridged to the phone's wlan0) as crosvm's virtio-net on virtio-mmio
 # (--virtio-mmio-net, before --virtio-mmio-gpu's window), /arm-io/net in the ADT, driven by DroidVMEthernet
 # (en0, DHCP from the Wi-Fi's router). The MAC is the one en0 had with no device behind it, so the Data volume's en0 stays en0.
@@ -139,7 +139,7 @@ SND = os.environ.get('MACOS_SND') == '1'
 # MACOS_MEDIA_VIDC=1: the decoder on msm_vidc itself (crosvm's vidc=true: guest CAPTURE buffers as udmabufs, no MediaCodec).
 MEDIA_VIDC = os.environ.get('MACOS_MEDIA_VIDC') == '1'
 # The guest's display size is the boot console's (simplefb, the GOP DroidVMDisplay reads), so both screens carry it.
-WIDTH, HEIGHT = 1920, 1080
+WIDTH, HEIGHT = 1280, 720
 FIRMWARE = FOLDER + '/edk2-macos.fd'   # ~/edk2-gunyah-topo built with -D VIRTIO_GPU_ENABLE=FALSE (edk2-gunyah-macos-novgpu.fd)
 REQUIRED_ARGS = ['mac-amfi-launch-permissive=1', 'malloc-ranges-off=1', 'arm64_maxoffset=0x7FFE000000']   # see TODO.md: without them launchd cannot get far
 # The board's -no_slto_panic is gone in xnu-12377: waitq and port locks spin under LockTimeOut (0.25 s, twice that for a waitq), and a
