@@ -7,13 +7,17 @@
   "compression": "ZSTD",
   "vm": {
     "name": "macOS 27.2 (DroidVM)",
-    "notes": "Portable import profile: 8 vCPU, 5120 MiB, 1280x720 @ 60 Hz. virtio_transport=custom keeps the data disks on PCI while the GPU, sound and media stay on virtio-mmio (virtio_mmio), matching the boot ADT rebuilt from k27-generated.dtb. Keep the packaged NAT network and hardware layout; do not change CPU count, memory, device transport, pools or display geometry before rebuilding the boot ADT from a matching VM FDT.",
+    "notes": "SM8750 (Snapdragon 8 Elite) profile: 6 vCPU on the weak uniform host capacity (792), single cluster, no auto topology; 5120 MiB; 1280x720 @ 60 Hz. virtio_transport=custom keeps the data disks on PCI while the GPU, sound and media stay on virtio-mmio (virtio_mmio), matching the boot ADT rebuilt from k27-generated.dtb. Keep the packaged NAT network and hardware layout; do not change CPU count, memory, device transport, pools or display geometry before rebuilding the boot ADT from a matching VM FDT.",
     "backend": "crosvm",
     "hypervisor": "gunyah",
     "protected_vm": "pseudo_unprotected",
     "memory_mb": 5120,
-    "cpu_count": 8,
-    "cpu_topology_auto": true,
+    "cpu_count": 6,
+    "cpu_affinity": "0=0-7:1=0-7:2=0-7:3=0-7:4=0-7:5=0-7",
+    "cpu_topology_auto": false,
+    "cpu_capacity": "0=792,1=792,2=792,3=792,4=792,5=792",
+    "cpu_clusters": "0-5",
+    "cpu_perf_requests": false,
     "balloon": false,
     "pmu": true,
     "rng": true,
@@ -21,7 +25,7 @@
     "sandbox": false,
     "hugepages": true,
     "prepare_lend_mthp": "chunked",
-    "swiotlb_mb": 256,
+    "swiotlb_mb": 0,
     "pci_msi": true,
     "virtio_transport": "custom",
     "virtio_mmio": [
@@ -106,7 +110,7 @@
         "hardware": "serial",
         "num": 1,
         "backend": "app_console",
-        "console": false,
+        "console": true,
         "fixed": true
       },
       {
@@ -134,13 +138,17 @@
         "hardware": "sbsa",
         "num": 1,
         "backend": "app_console",
-        "console": true
+        "console": false
       }
     ],
     "networks": [
       {
         "pkg_network_ref": "net0",
-        "mac_address": "02:44:56:4d:00:01"
+        "mac_address": "02:44:56:4d:00:01",
+        "dhcp4_lease": {
+          "enabled": true,
+          "offset": 64
+        }
       }
     ],
     "shared_dirs": [],

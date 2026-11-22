@@ -185,8 +185,20 @@ def make_adt(fdt, dram_size, unique_chip_id, output, cpu_regs='0', gpu=False, vi
         # The PCI host (crosvm's --input devices are virtio-pci functions): /arm-io/pcie, the FDT's ECAM window, where DroidVMInput
         # finds the app's touch screen, tablet, mouse and keyboard (overlay/kext/DroidVMInput.json).
         assert text.count('    vm = describe(parse_fdt(args.fdt.read_bytes()))') == 1
-        text = text.replace('    vm = describe(parse_fdt(args.fdt.read_bytes()))',
-                            '    fdt_nodes = parse_fdt(args.fdt.read_bytes())\n    vm = describe(fdt_nodes)')
+        parsed = '    fdt_nodes = parse_fdt(args.fdt.read_bytes())\n'
+        if cpu_profile := os.environ.get('MACOS_RECOVERY_CPU_PROFILE'):
+            # MACOS_RECOVERY_CPU_PROFILE: the vmpkg profile the package will be imported with. crosvm builds the real FDT at
+            # runtime from it, so the static ADT must describe the same CPU count and GICv3 redistributor layout, or the
+            # kernel's CPU/GIC probing disagrees with the hardware it is started on. Retarget the reference FDT (eight-vCPU
+            # crosvm layout) to the profile's count before the ADT is derived from it (scripts/recovery_cpu.py).
+            if cpu_regs:
+                raise ValueError('a recovery CPU profile must supply all guest vCPUs')
+            from recovery_cpu import profile_cpu_count
+
+            count = profile_cpu_count(cpu_profile)
+            parsed += ('    import sys\n' f'    sys.path.insert(0, {str(ROOT / "scripts")!r})\n'
+                       '    from recovery_cpu import retarget_fdt\n' f'    retarget_fdt(fdt_nodes, {count})\n')
+        text = text.replace('    vm = describe(parse_fdt(args.fdt.read_bytes()))', parsed + '    vm = describe(fdt_nodes)')
         # crosvm's PL030 RTC supplies wall time before userspace services create absolute deadlines.
         text = text.replace(marker, "              *[node('rtc', [('compatible', b'arm,pl030\\0'),"
                                     " ('reg', struct.pack('<QQ', address - ARMIO_BASE, size))])"
