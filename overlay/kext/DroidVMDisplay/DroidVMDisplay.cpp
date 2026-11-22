@@ -1055,9 +1055,12 @@ bool DroidVMDisplay::scanOut(IOSurface *surface)
     }
     if (status) {
         if (++fScanoutFailures == 8)
-            IOLog("DroidVMDisplay: virtio-gpu scanout failed 8 times (last %#x); copying from now on\n", status);
+            IOLog("DroidVMDisplay: virtio-gpu scanout failed 8 times in a row (last %#x); copying from now on\n", status);
         return false;
     }
+    // An isolated import or flush failure must not add to the next failure run: a handful of them spread over a session used to
+    // reach 8 and pin every later frame on the copy path.
+    fScanoutFailures = 0;
     if (pixelFormat != fSurfaceFormat) {
         IOLog("DroidVMDisplay: virtio-gpu scanout of format %#x\n", pixelFormat);
         fSurfaceFormat = pixelFormat;

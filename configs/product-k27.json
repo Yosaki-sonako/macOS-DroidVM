@@ -101,7 +101,8 @@
  },
  "kernel_args": [
   "vm_compression_limit=1572864",
-  "rootauth=0"
+  "rootauth=0",
+  "droidvm-touch-digitizer=0"
  ],
  "kexts": [
   "bash k27/build-platform-cpu.sh",
@@ -131,6 +132,7 @@
   ]
  },
  "boot": {
+  "menu_timeout": 0,
   "base_trustcache": "artifacts/27.2/boot/kernel.macho.trustcache",
   "seed": "artifacts/27.2/disk/scratch-data.img",
   "output": "out/product/k27"

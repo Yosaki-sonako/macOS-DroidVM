@@ -7,7 +7,7 @@
   "compression": "ZSTD",
   "vm": {
     "name": "macOS 27.2 (DroidVM)",
-    "notes": "SM8750 (Snapdragon 8 Elite) profile: 6 vCPU on the weak uniform host capacity (792), single cluster, no auto topology; 5120 MiB; 1280x720 @ 60 Hz. virtio_transport=custom keeps the data disks on PCI while the GPU, sound and media stay on virtio-mmio (virtio_mmio), matching the boot ADT rebuilt from k27-generated.dtb. Keep the packaged NAT network and hardware layout; do not change CPU count, memory, device transport, pools or display geometry before rebuilding the boot ADT from a matching VM FDT.",
+    "notes": "SM8750 (Snapdragon 8 Elite) profile: 6 vCPU on the weak uniform host capacity (792), single cluster, no auto topology; 5120 MiB; desktop 1280x720 @ 60 Hz. simplefb stays 1920x1080 on purpose: crosvm derives the guest framebuffer from it, and the boot ADT reserves 8 MiB at the top of RAM for that geometry (k27-generated.dtb). A 720p simplefb moves the real framebuffer 4 MiB down while the ADT still points the kernel at the 1080p address. virtio_transport=custom keeps the data disks on PCI while the GPU, sound and media stay on virtio-mmio (virtio_mmio), matching the boot ADT rebuilt from k27-generated.dtb. Keep the packaged NAT network and hardware layout; do not change CPU count, memory, device transport, pools or simplefb geometry before rebuilding the boot ADT from a matching VM FDT.",
     "backend": "crosvm",
     "hypervisor": "gunyah",
     "protected_vm": "pseudo_unprotected",
@@ -74,8 +74,8 @@
         "exporter": "none",
         "transport_cap": "cpu",
         "input_enabled": false,
-        "width": 1280,
-        "height": 720,
+        "width": 1920,
+        "height": 1080,
         "poll_hz": 30
       }
     },
